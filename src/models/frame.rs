@@ -8,5 +8,5 @@ pub struct Frame {
     pub repo: String,
     pub ops: Vec<Operation>,
     #[serde(with = "serde_bytes")]
-    pub blocks: Vec<u8>
+    pub blocks: Vec<u8>,
 }

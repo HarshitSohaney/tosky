@@ -1,3 +1,4 @@
+use crate::parser::{parse_message};
 use tungstenite::{connect, Message};
 
 pub fn start_ingestion() -> Result<(), Box<dyn std::error::Error>> {
@@ -15,8 +16,8 @@ pub fn start_ingestion() -> Result<(), Box<dyn std::error::Error>> {
 
         match msg {
             Message::Binary(data) => {
-                println!("Received {} bytes", data.len());
-                // This is what we want - CBOR firehose data
+                let msg = parse_message(&data);
+                println!("Received {} bytes, msg is {:?}", data.len(), msg);
             }
             Message::Close(_) => {
                 // Server closed connection

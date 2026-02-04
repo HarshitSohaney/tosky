@@ -11,7 +11,12 @@ pub enum Action {
 #[derive(Debug, Deserialize)]
 pub struct Operation {
     pub action: Action,
-    pub cid: Option<String>,
     pub path: String,
-    pub prev: Option<String>
+    // Sets a default if not present - None for Option
+    #[serde(default)]
+    #[serde(with = "serde_bytes")]
+    pub cid: Option<Vec<u8>>,
+    #[serde(default)]
+    #[serde(with = "serde_bytes")]
+    pub prev: Option<Vec<u8>>,
 }
