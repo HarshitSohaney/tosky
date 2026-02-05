@@ -5,9 +5,14 @@ mod parser;
 mod filter;
 mod server;
 
+use crate::db::Database;
+use crate::filter::Filter;
+
 fn main() {
-    println!("Hello, world!");
-    if let Err(e) = ingestion::start_ingestion() {
+    let db = Database::new("../db/posts.db");
+    let filter: Filter = Filter::new(db);
+
+    if let Err(e) = ingestion::start_ingestion(filter) {
         eprintln!("Error: {}", e);
     }
 }

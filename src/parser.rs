@@ -81,7 +81,7 @@ pub fn parse_car_blocks(car_data: &[u8]) -> Vec<(Vec<u8>, Vec<u8>)> {  // Vec<(C
     blocks
 }
 
-fn read_varint(data: &[u8]) -> (u64, usize) {
+pub fn read_varint(data: &[u8]) -> (u64, usize) {
     // Each byte:
     // - Lower 7 bits: part of the number
     // - High bit (0x80): "more bytes follow" flag
