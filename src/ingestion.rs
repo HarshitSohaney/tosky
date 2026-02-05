@@ -1,5 +1,6 @@
-use crate::parser::{parse_message};
+use crate::parser::{parse_car_blocks, parse_message};
 use tungstenite::{connect, Message};
+use crate::models::{Post, Action};
 
 pub fn start_ingestion() -> Result<(), Box<dyn std::error::Error>> {
     // Open a websocket to the url
@@ -16,8 +17,28 @@ pub fn start_ingestion() -> Result<(), Box<dyn std::error::Error>> {
 
         match msg {
             Message::Binary(data) => {
-                let msg = parse_message(&data);
-                println!("Received {} bytes, msg is {:?}", data.len(), msg);
+                if let Ok(Some(frame)) = parse_message(&data) {
+                    for op in frame.ops {
+                        if !matches!(op.action, Action::Create)
+                            || !op.path.starts_with("app.bsky.feed.post") {
+                            continue;
+                        }
+
+                        // Parse blocks
+                        let blocks = parse_car_blocks(&frame.blocks);
+                        if let Some(target_cid) = &op.cid {
+                            for (block_cid, block_data) in &blocks {
+                                if block_cid == &target_cid[1..] {
+                                    // Found the right block!
+                                    match serde_cbor::from_slice::<Post>(&block_data) {
+                                        Ok(post) => println!("Post: {:?}", post.text),
+                                        Err(e) => println!("Failed to parse post: {}", e),
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
             Message::Close(_) => {
                 // Server closed connection
