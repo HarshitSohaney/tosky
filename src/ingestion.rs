@@ -3,7 +3,7 @@ use tungstenite::{connect, Message};
 use crate::models::{Post, Action};
 use crate::filter::Filter;
 
-pub fn start_ingestion(filter: Filter) -> Result<(), Box<dyn std::error::Error>> {
+pub fn start_ingestion(filter: &mut Filter) -> Result<(), Box<dyn std::error::Error>> {
     // Open a websocket to the url
     let (mut socket, response) = connect("wss://bsky.network/xrpc/com.atproto.sync.subscribeRepos")?;
 

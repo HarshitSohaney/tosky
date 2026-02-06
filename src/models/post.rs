@@ -33,8 +33,10 @@ pub enum Feature {
     Mention { did: String },
     #[serde(rename = "app.bsky.richtext.facet#link")]
     Link { uri: String },
-    #[serde(rename = "app.bsky.richtext.facet#tag")]
+    #[serde(rename = "app.bsky.richtext.facet#tag", alias = "app.bsky.richtext.facet#hashtag")]
     Tag { tag: String },
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Debug, Deserialize)]

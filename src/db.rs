@@ -2,7 +2,8 @@ use sqlite::{Connection, State};
 use crate::models::{Post, TorontoPost};
 
 pub struct Database {
-    pub conn: Connection
+    conn: Connection,
+    counter: i32
 }
 
 impl Database {
@@ -22,18 +23,38 @@ impl Database {
             eprintln!("There was an creating the table {}", e);
         }
 
-        Database { conn }
+        Database { conn, counter: 0 }
     }
 
-    pub fn insert_post(&self, post: &TorontoPost) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn insert_post(&mut self, post: &TorontoPost) -> Result<(), Box<dyn std::error::Error>> {
+        if self.counter >= 1000 {
+            self.pop_posts();
+        }
+
         let mut stmt = self.conn.prepare("INSERT INTO posts (uri, cid, did, indexed_at) VALUES (?, ?, ?, ?)")?;
         stmt.bind((1, post.uri.as_str()))?;
         stmt.bind((2, post.cid.as_str()))?;
         stmt.bind((3, post.did.as_str()))?;
         stmt.bind((4, post.indexed_at))?;
         stmt.next()?;
-        
+
+        self.counter += 1;
         Ok(())
+    }
+
+    pub fn pop_posts(&mut self) {
+        let q = "
+            DELETE FROM posts WHERE indexed_at < (
+            SELECT indexed_at FROM posts
+            ORDER BY indexed_at DESC
+            LIMIT 1 OFFSET 99999
+        )";
+
+        if let Err(e) = self.conn.execute(q) {
+            eprintln!("There was an deleting the table {}", e);
+        }
+
+        self.counter = 0;
     }
 
 }

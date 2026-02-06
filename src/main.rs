@@ -10,9 +10,9 @@ use crate::filter::Filter;
 
 fn main() {
     let db = Database::new("../db/posts.db");
-    let filter: Filter = Filter::new(db);
+    let mut filter: Filter = Filter::new(db);
 
-    if let Err(e) = ingestion::start_ingestion(filter) {
+    if let Err(e) = ingestion::start_ingestion(&mut filter) {
         eprintln!("Error: {}", e);
     }
 }

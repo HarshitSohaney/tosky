@@ -95,7 +95,6 @@ pub fn read_varint(data: &[u8]) -> (u64, usize) {
     let mut result = 0u64;
     let mut shift = 0;
 
-    // TODO: implement
     for (i, &byte) in data.iter().enumerate() {
         let data_bits = (0x7F & byte) as u64;
         result |= data_bits << shift;
