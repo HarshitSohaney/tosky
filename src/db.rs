@@ -57,33 +57,51 @@ impl Database {
         self.counter = 0;
     }
 
-    pub fn read_last_n_posts_from(&self, offset: i64, n: i64) -> Vec<String> {
+    /// cursor is the indexed_at timestamp to paginate from
+    pub fn read_posts(&self, limit: i64, cursor: Option<i64>) -> (Vec<String>, Option<String>) {
         let mut posts: Vec<String> = Vec::new();
+        let mut last_indexed_at: Option<i64> = None;
 
-        let q = "
-            SELECT uri
-            FROM posts
-            ORDER BY indexed_at
-            DESC 
-            LIMIT ?
-            OFFSET ?
-        ";
+        let (q, needs_cursor_bind) = match cursor {
+            Some(_) => (
+                "SELECT uri, indexed_at FROM posts WHERE indexed_at < ? ORDER BY indexed_at DESC LIMIT ?",
+                true
+            ),
+            None => (
+                "SELECT uri, indexed_at FROM posts ORDER BY indexed_at DESC LIMIT ?",
+                false
+            ),
+        };
 
         let mut stmt = match self.conn.prepare(q) {
             Ok(s) => s,
-            Err(_) => return posts
+            Err(_) => return (posts, None)
         };
 
-        stmt.bind((1, n)).ok();
-        stmt.bind((2, offset)).ok();
+        if needs_cursor_bind {
+            stmt.bind((1, cursor.unwrap())).ok();
+            stmt.bind((2, limit)).ok();
+        } else {
+            stmt.bind((1, limit)).ok();
+        }
 
         while let Ok(sqlite::State::Row) = stmt.next() {
             if let Ok(uri) = stmt.read::<String, _>(0) {
                 posts.push(uri);
             }
+            if let Ok(indexed_at) = stmt.read::<i64, _>(1) {
+                last_indexed_at = Some(indexed_at);
+            }
         }
 
-        posts
+        // Only return cursor if we got a full page (more results likely)
+        let next_cursor = if posts.len() == limit as usize {
+            last_indexed_at.map(|ts| ts.to_string())
+        } else {
+            None
+        };
+
+        (posts, next_cursor)
     }
 }
 
