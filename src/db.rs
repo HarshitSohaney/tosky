@@ -57,6 +57,34 @@ impl Database {
         self.counter = 0;
     }
 
+    pub fn read_last_n_posts_from(&self, offset: i64, n: i64) -> Vec<String> {
+        let mut posts: Vec<String> = Vec::new();
+
+        let q = "
+            SELECT uri
+            FROM posts
+            ORDER BY indexed_at
+            DESC 
+            LIMIT ?
+            OFFSET ?
+        ";
+
+        let mut stmt = match self.conn.prepare(q) {
+            Ok(s) => s,
+            Err(_) => return posts
+        };
+
+        stmt.bind((1, n)).ok();
+        stmt.bind((2, offset)).ok();
+
+        while let Ok(sqlite::State::Row) = stmt.next() {
+            if let Ok(uri) = stmt.read::<String, _>(0) {
+                posts.push(uri);
+            }
+        }
+
+        posts
+    }
 }
 
 
