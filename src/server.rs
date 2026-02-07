@@ -3,6 +3,9 @@ use std::sync::Arc;
 use crate::db::Database;
 use std::thread;
 
+// Your ngrok hostname - update this each time you restart ngrok
+const HOSTNAME: &str = "unobscenely-keyed-tatiana.ngrok-free.dev";
+
 /// Parse query string into key-value pairs
 fn parse_query_params(url: &str) -> std::collections::HashMap<String, String> {
     let mut params = std::collections::HashMap::new();
@@ -19,6 +22,18 @@ fn parse_query_params(url: &str) -> std::collections::HashMap<String, String> {
     }
 
     params
+}
+
+/// DID document for did:web resolution
+fn did_json() -> String {
+    let json = r##"{"@context":["https://www.w3.org/ns/did/v1"],"id":"did:web:HOSTNAME","service":[{"id":"#bsky_fg","type":"BskyFeedGenerator","serviceEndpoint":"https://HOSTNAME"}]}"##;
+    json.replace("HOSTNAME", HOSTNAME)
+}
+
+/// Describe feed generator endpoint
+fn describe_feed_generator() -> String {
+    let json = r#"{"did":"did:web:HOSTNAME","feeds":[{"uri":"at://did:web:HOSTNAME/app.bsky.feed.generator/toronto"}]}"#;
+    json.replace("HOSTNAME", HOSTNAME)
 }
 
 pub fn start_server() {
@@ -39,7 +54,15 @@ pub fn start_server() {
                     Ok(rq) => {
                         let url = rq.url();
 
-                        if url.starts_with("/xrpc/app.bsky.feed.getFeedSkeleton") {
+                        if url == "/.well-known/did.json" {
+                            let response = Response::from_string(did_json())
+                                .with_header("Content-Type: application/json".parse::<tiny_http::Header>().unwrap());
+                            rq.respond(response).ok();
+                        } else if url.starts_with("/xrpc/app.bsky.feed.describeFeedGenerator") {
+                            let response = Response::from_string(describe_feed_generator())
+                                .with_header("Content-Type: application/json".parse::<tiny_http::Header>().unwrap());
+                            rq.respond(response).ok();
+                        } else if url.starts_with("/xrpc/app.bsky.feed.getFeedSkeleton") {
                             let params = parse_query_params(url);
 
                             // Parse limit (default 50, max 100)
