@@ -96,12 +96,12 @@ curl -X POST "https://bsky.social/xrpc/com.atproto.repo.putRecord" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "repo": "<YOUR_HANDLE>",
+    "repo": "harsheet.bsky.social",
     "collection": "app.bsky.feed.generator",
     "rkey": "toronto",
     "record": {
       "$type": "app.bsky.feed.generator",
-      "did": "did:web:<NEW_NGROK_HOSTNAME>",
+      "did": "did:web:unobscenely-keyed-tatiana.ngrok-free.dev",
       "displayName": "Toronto Feed",
       "description": "Posts about Toronto - keywords, hashtags, and links",
       "createdAt": "2026-02-07T00:00:00Z"

@@ -75,7 +75,14 @@ pub fn start_server() {
                             let cursor: Option<i64> = params.get("cursor")
                                 .and_then(|s| s.parse().ok());
 
+                            println!("[Server] getFeedSkeleton request - limit:{} cursor:{:?}", limit, cursor);
+
                             let (posts, next_cursor) = db.read_posts(limit, cursor);
+
+                            println!("[Server] Returning {} posts, next_cursor:{:?}", posts.len(), next_cursor);
+                            for (i, uri) in posts.iter().enumerate() {
+                                println!("[Server]   {}. {}", i + 1, uri);
+                            }
 
                             // Build feed array
                             let feed: Vec<String> = posts

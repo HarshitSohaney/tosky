@@ -1,9 +1,15 @@
 use sqlite::{Connection, State};
 use crate::models::{Post, TorontoPost};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub struct Database {
     conn: Connection,
     counter: i32
+}
+
+pub enum Column {
+    Likes,
+    Reposts,
 }
 
 impl Database {
@@ -64,11 +70,11 @@ impl Database {
 
         let (q, needs_cursor_bind) = match cursor {
             Some(_) => (
-                "SELECT uri, indexed_at FROM posts WHERE indexed_at < ? ORDER BY indexed_at DESC LIMIT ?",
+                "SELECT uri, indexed_at FROM posts WHERE indexed_at < ? ORDER BY (score - ((strftime('%s', 'now') - indexed_at) / 3600.0 * 0.7) + ((strftime('%s', 'now') / 3600 + LENGTH(uri) * 7) % 10)) DESC LIMIT ?",
                 true
             ),
             None => (
-                "SELECT uri, indexed_at FROM posts ORDER BY indexed_at DESC LIMIT ?",
+                "SELECT uri, indexed_at FROM posts ORDER BY (score - ((strftime('%s', 'now') - indexed_at) / 3600.0 * 0.7) + ((strftime('%s', 'now') / 3600 + LENGTH(uri) * 7) % 10)) DESC LIMIT ?",
                 false
             ),
         };
@@ -103,7 +109,75 @@ impl Database {
 
         (posts, next_cursor)
     }
+
+    pub fn increment_col(&self, uri: &str, column: Column) -> Result<(), Box<dyn std::error::Error>> {
+        let q = match column {
+            Column::Likes => "UPDATE posts SET likes = likes + 1, score = (likes + 1) + reposts * 2 WHERE uri = ?",
+            Column::Reposts => "UPDATE posts SET reposts = reposts + 1, score = likes + (reposts + 1) * 2 WHERE uri = ?",
+        };
+        
+        let mut stmt = self.conn.prepare(q)?;
+        stmt.bind((1, uri))?;
+        stmt.next()?;
+
+        Ok(())
+    }
+
+    pub fn get_posts_to_enrich(&self, limit: i64) -> Vec<String> {
+        let mut posts: Vec<String> = Vec::new();
+
+        let q = "
+            SELECT uri
+            FROM posts
+            ORDER BY last_enriched
+            ASC 
+            LIMIT ?
+        ";
+
+        let mut stmt = match self.conn.prepare(q) {
+            Ok(s) => s,
+            Err(_) => return posts,
+        };
+
+        stmt.bind((1, limit));
+
+        while let Ok(sqlite::State::Row) = stmt.next() {
+            if let Ok(uri) = stmt.read::<String, _>(0) {
+                posts.push(uri);
+            }
+        }
+
+        posts
+    }
+
+    pub fn update_engagement(&self, 
+        uri: &str,
+        likes: i64,
+        reposts: i64,
+        quotes: i64,
+        replies: i64,
+        bookmarks: i64) {
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        let score = likes + reposts*2 + quotes*3 + replies + bookmarks;
+
+        let q = "UPDATE posts SET likes=?, reposts=?, quotes=?, replies=?, bookmarks=?, score=?, last_enriched=? WHERE
+    uri=?";
+
+        if let Ok(mut stmt) = self.conn.prepare(q) {
+            stmt.bind((1, likes)).ok();
+            stmt.bind((2, reposts)).ok();
+            stmt.bind((3, quotes)).ok();
+            stmt.bind((4, replies)).ok();
+            stmt.bind((5, bookmarks)).ok();
+            stmt.bind((6, score)).ok();
+            stmt.bind((7, now)).ok();
+            stmt.bind((8, uri)).ok();
+            stmt.next().ok();
+        }
+    }
 }
-
-
-

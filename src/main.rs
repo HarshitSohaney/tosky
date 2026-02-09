@@ -4,12 +4,27 @@ mod ingestion;
 mod parser;
 mod filter;
 mod server;
+mod enrichment;
 use std::thread;
 
 use crate::db::Database;
+use crate::enrichment::EnrichThread;
 use crate::filter::Filter;
 
 fn main() {
+    let enrichment_handle = thread::spawn(|| {
+        let enrich = EnrichThread::new("../db/posts.db");
+
+        loop {
+            if let Err(e) = enrich.enrich_what_we_missed() {
+                eprintln!("Error when enriching: {}", e);
+            }
+
+            std::thread::sleep(std::time::Duration::from_secs(300));
+        }
+        
+    });
+
     let ingestion_handle = thread::spawn(|| {
         let db = Database::new("../db/posts.db");
         let mut filter: Filter = Filter::new(db);
@@ -23,6 +38,7 @@ fn main() {
         server::start_server();
     });
 
+    enrichment_handle.join().unwrap();
     ingestion_handle.join().unwrap();
     server_handle.join().unwrap();
 }

@@ -1,9 +1,9 @@
-use crate::models::{Feature, Frame, Operation, Post, TorontoPost, Embed};
-use crate::db::Database;
+use crate::models::{Feature, Frame, Operation, Post, TorontoPost, Embed, StrongRef, InteractionType};
+use crate::db::{Column, Database};
 use lru::LruCache;
 use std::num::NonZeroUsize;
 
-use std::time::{SystemTime};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub struct Filter {
     db: Database,
@@ -24,7 +24,20 @@ impl Filter {
             strict_keywords: vec![
                 "ttc",
                 "cn tower",
-                "6ix"
+                "6ix",
+                "Danforth Music Hall",
+                "bluejays",
+                "Scotiabank arena",
+                "air canada centre",
+                "Rogers centre",
+                "Rogers Stadium",
+                "Trillium Park",
+                "Olivia Chow",
+                "Kensington Market",
+                "Yonge",
+                "Roncesvalles",
+                "YYZ",
+                "metrolinx"
             ]
         }
     }
@@ -76,6 +89,18 @@ impl Filter {
         bytes.iter().map(|b| format!("{:02x}", b)).collect()
     }
 
+    pub fn on_interaction(&mut self, subject: &StrongRef, interaction_type: InteractionType) {
+        if interaction_type == InteractionType::LIKE {
+            if let Err(res) = self.db.increment_col(&subject.uri, Column::Likes) {
+                eprintln!("Ran into an error {}", res);
+            }
+        } else if interaction_type == InteractionType::REPOST {
+            if let Err(res) = self.db.increment_col(&subject.uri, Column::Reposts) {
+                eprintln!("Ran into an error {}", res);
+            }
+        }
+    }
+
     pub fn callback(&mut self, frame: &Frame, op: &Operation, post: &Post) {
         if !self.is_6ix_post(post) {
             return;
@@ -87,7 +112,7 @@ impl Filter {
             uri: format!("at://{}/{}", frame.repo, op.path),
             cid: self.bytes_to_hex(&op.cid.as_ref().unwrap()[1..]),
             did: frame.repo.clone(),
-            indexed_at: SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64
+            indexed_at: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64
         };
 
         if let Err(e) = self.db.insert_post(&toronto_post) {
