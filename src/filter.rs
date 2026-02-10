@@ -6,7 +6,7 @@ use std::num::NonZeroUsize;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub struct Filter {
-    db: Database,
+    pub db: Database,
     toronto_uris: LruCache<String, ()>,
     lax_keywords: Vec<&'static str>,
     strict_keywords: Vec<&'static str>

@@ -12,6 +12,10 @@ pub enum Column {
     Reposts,
 }
 
+pub struct Metadata {
+    pub seq: i64
+}
+
 impl Database {
     pub fn new(path: &str) -> Self {
         let conn = sqlite::open(path).unwrap();
@@ -21,8 +25,20 @@ impl Database {
                 uri TEXT PRIMARY KEY,
                 cid TEXT NOT NULL,
                 did TEXT NOT NULL,
-                indexed_at INTEGER NOT NULL
-            )
+                indexed_at INTEGER NOT NULL,
+                likes INTEGER DEFAULT 0,
+                reposts INTEGER DEFAULT 0,
+                quotes INTEGER DEFAULT 0,
+                replies INTEGER DEFAULT 0,
+                bookmarks INTEGER DEFAULT 0,
+                score INTEGER DEFAULT 0,
+                last_enriched INTEGER DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS metadata (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
         ";
 
         if let Err(e) = conn.execute(q) {
@@ -70,11 +86,16 @@ impl Database {
 
         let (q, needs_cursor_bind) = match cursor {
             Some(_) => (
-                "SELECT uri, indexed_at FROM posts WHERE indexed_at < ? ORDER BY (score - ((strftime('%s', 'now') - indexed_at) / 3600.0 * 0.7) + ((strftime('%s', 'now') / 3600 + LENGTH(uri) * 7) % 10)) DESC LIMIT ?",
+                "SELECT uri, indexed_at FROM posts WHERE indexed_at < ?
+                ORDER BY ((score + 5) / (1.0 + ((strftime('%s', 'now') - indexed_at) / 3600.0) * 0.5) + ((strftime('%s', 'now') / 3600 + LENGTH(uri) * 7) % 10))
+                DESC LIMIT ?",
                 true
             ),
             None => (
-                "SELECT uri, indexed_at FROM posts ORDER BY (score - ((strftime('%s', 'now') - indexed_at) / 3600.0 * 0.7) + ((strftime('%s', 'now') / 3600 + LENGTH(uri) * 7) % 10)) DESC LIMIT ?",
+                "SELECT uri, indexed_at
+                FROM posts
+                ORDER BY ((score + 5) / (1.0 + ((strftime('%s', 'now') - indexed_at) / 3600.0) * 0.5) + ((strftime('%s', 'now') / 3600 + LENGTH(uri) * 7) % 10))
+                DESC LIMIT ?",
                 false
             ),
         };
@@ -179,5 +200,27 @@ impl Database {
             stmt.bind((8, uri)).ok();
             stmt.next().ok();
         }
+    }
+
+    pub fn set_metadata(&self, metadata: &Metadata) {
+        let q = "INSERT OR REPLACE INTO metadata (key, value) VALUES ('cursor', ?)";
+        if let Ok(mut stmt) = self.conn.prepare(q) {
+            stmt.bind((1, metadata.seq.to_string().as_str())).ok();
+            stmt.next().ok();
+        }
+    }
+
+    pub fn get_metadata(&self) -> Option<Metadata> {
+        let q = "SELECT value FROM metadata WHERE key = 'cursor'";
+        if let Ok(mut stmt) = self.conn.prepare(q) {
+            if let Ok(State::Row) = stmt.next() {
+                if let Ok(seq_str) = stmt.read::<String, _>(0) {
+                    if let Ok(seq) = seq_str.parse::<i64>() {
+                        return Some(Metadata { seq });
+                    }
+                }
+            }
+        }
+        None
     }
 }

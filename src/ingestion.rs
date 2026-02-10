@@ -1,13 +1,28 @@
 use crate::parser::{parse_car_blocks, parse_message};
 use tungstenite::{connect, Message};
 use crate::models::{Post, Action, Like, Repost, InteractionType};
+use crate::db::Metadata;
 use crate::filter::Filter;
 
 pub fn start_ingestion(filter: &mut Filter) -> Result<(), Box<dyn std::error::Error>> {
+    // Let's see if we have a cursor we need to use!
+    let uri = match filter.db.get_metadata() {
+        Some(meta) => {
+            println!("[Ingestion] Resuming from cursor: {}", meta.seq);
+            format!("wss://bsky.network/xrpc/com.atproto.sync.subscribeRepos?cursor={}", meta.seq)
+        },
+        None => {
+            println!("[Ingestion] No cursor found, starting fresh");
+            String::from("wss://bsky.network/xrpc/com.atproto.sync.subscribeRepos")
+        },
+    };
+
     // Open a websocket to the url
-    let (mut socket, response) = connect("wss://bsky.network/xrpc/com.atproto.sync.subscribeRepos")?;
+    let (mut socket, response) = connect(uri)?;
 
     println!("Connected to the server");
+
+    let mut count = 0;
 
     // when we receive a message from the url, call a provided callback
     // that passes the posts to our filter
@@ -17,6 +32,13 @@ pub fn start_ingestion(filter: &mut Filter) -> Result<(), Box<dyn std::error::Er
         match msg {
             Message::Binary(data) => {
                 if let Ok(Some(frame)) = parse_message(&data) {
+                    if count > 500 {
+                        count = 0;
+                        filter.db.set_metadata(&Metadata { seq: frame.seq });
+                    } else {
+                        count += 1;
+                    }
+
                     for op in &frame.ops {
                         if !matches!(op.action, Action::Create) {
                             continue;

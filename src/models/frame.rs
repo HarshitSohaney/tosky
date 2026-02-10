@@ -9,4 +9,5 @@ pub struct Frame {
     pub ops: Vec<Operation>,
     #[serde(with = "serde_bytes")]
     pub blocks: Vec<u8>,
+    pub seq: i64,
 }
