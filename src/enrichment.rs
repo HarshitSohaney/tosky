@@ -1,6 +1,7 @@
 use crate::db::Database;
 use std::process::Command;
 use serde_json::Value;
+use crate::filter::NSFW_LABELS;
 
 pub struct EnrichThread {
     db: Database,
@@ -41,6 +42,20 @@ impl EnrichThread {
 
             for post in posts {
                 let uri = post["uri"].as_str().unwrap_or("");
+
+                if let Some(labels) = post["labels"].as_array() {
+                    let is_nsfw = labels.iter().any(|l| {
+                        let val = l["val"].as_str().unwrap_or("");
+                        NSFW_LABELS.contains(&val)
+                    });
+
+                    if is_nsfw {
+                        println!("[Enrichment] NSFW post, deleting: {}", uri);
+                        self.db.delete_post(uri);
+                        continue;
+                    }
+                }
+                
                 let likes = post["likeCount"].as_i64().unwrap_or(0);
                 let reposts = post["repostCount"].as_i64().unwrap_or(0);
                 let quotes = post["quoteCount"].as_i64().unwrap_or(0);
@@ -59,7 +74,7 @@ impl EnrichThread {
                     self.db.delete_post(uri);
                 }
             }
-            
+
         } else {
             println!("[Enrichment] No posts in response. Body: {}", &body[..200.min(body.len())]);
         }

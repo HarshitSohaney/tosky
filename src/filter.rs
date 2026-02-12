@@ -5,6 +5,8 @@ use std::num::NonZeroUsize;
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
+pub const NSFW_LABELS: &[&str] = &["porn", "nudity", "sexual", "graphic-media", "nsfw"];
+
 pub struct Filter {
     pub db: Database,
     toronto_uris: LruCache<String, ()>,
@@ -80,6 +82,14 @@ impl Filter {
         false
     }
 
+    fn is_nsfw(&self, post: &Post) -> bool {
+        if let Some(labels) = &post.labels {
+            return labels.values.iter().any(|l| NSFW_LABELS.contains(&l.val.as_str()));
+        }
+
+        false
+    }
+
     fn contains_word_strict(&self, text: &str, word: &str) -> bool {
         text.split_whitespace()
           .any(|w| w.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase() == word)
@@ -102,7 +112,7 @@ impl Filter {
     }
 
     pub fn callback(&mut self, frame: &Frame, op: &Operation, post: &Post) {
-        if !self.is_6ix_post(post) {
+        if self.is_nsfw(post) || !self.is_6ix_post(post) {
             return;
         }
 

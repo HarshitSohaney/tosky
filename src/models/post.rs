@@ -9,7 +9,8 @@ pub struct Post {
     pub reply: Option<Reply>,
     pub embed: Option<Embed>,
     pub langs: Option<Vec<String>>,
-    pub tags: Option<Vec<String>>
+    pub tags: Option<Vec<String>>,
+    pub labels: Option<SelfLabels>
 }
 
 #[derive(Debug, Deserialize)]
@@ -95,4 +96,14 @@ pub struct TorontoPost {
     pub cid: String,
     pub did: String,
     pub indexed_at: i64
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SelfLabels {
+    pub values: Vec<LabelValue>
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LabelValue {
+    pub val: String,
 }
