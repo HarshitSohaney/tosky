@@ -20,7 +20,7 @@ fn main() {
                 eprintln!("Error when enriching: {}", e);
             }
 
-            std::thread::sleep(std::time::Duration::from_secs(300));
+            std::thread::sleep(std::time::Duration::from_secs(100));
         }
         
     });
@@ -29,9 +29,7 @@ fn main() {
         let db = Database::new("../db/posts.db");
         let mut filter: Filter = Filter::new(db);
 
-        if let Err(e) = ingestion::start_ingestion(&mut filter) {
-            eprintln!("Error: {}", e);
-        }
+        ingestion::start_ingestion(&mut filter);
     });
 
     let server_handle = thread::spawn(|| {

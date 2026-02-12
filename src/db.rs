@@ -2,6 +2,12 @@ use sqlite::{Connection, State};
 use crate::models::{Post, TorontoPost};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+// Ranking parameters
+const BASE_SCORE: f64 = 5.0;      // Minimum score for new posts with no engagement
+const DECAY_RATE: f64 = 0.7;      // How fast posts lose relevance (higher = faster decay)
+const SHUFFLE_MOD: i32 = 10;      // Range of hourly shuffle (0 to N-1)
+const SHUFFLE_MULT: i32 = 7;      // Multiplier for URI-based variance
+
 pub struct Database {
     conn: Connection,
     counter: i32
@@ -19,7 +25,8 @@ pub struct Metadata {
 impl Database {
     pub fn new(path: &str) -> Self {
         let conn = sqlite::open(path).unwrap();
-
+        conn.execute("PRAGMA journal_mode=WAL;").ok();
+        
         let q = "
             CREATE TABLE IF NOT EXISTS posts (
                 uri TEXT PRIMARY KEY,
@@ -79,28 +86,42 @@ impl Database {
         self.counter = 0;
     }
 
+    pub fn delete_post(&self, uri: &str) {
+        let q = "DELETE FROM posts WHERE uri = ?";
+        if let Ok(mut stmt) = self.conn.prepare(q) {
+            stmt.bind((1, uri)).ok();
+            stmt.next().ok();
+        }
+    }
+
     /// cursor is the indexed_at timestamp to paginate from
     pub fn read_posts(&self, limit: i64, cursor: Option<i64>) -> (Vec<String>, Option<String>) {
         let mut posts: Vec<String> = Vec::new();
         let mut last_indexed_at: Option<i64> = None;
 
+        let ranking_formula = format!(
+            "(score + {}) / (1.0 + ((strftime('%s', 'now') - indexed_at) / 3600.0) * {}) + ((strftime('%s', 'now') / 3600 + LENGTH(uri) * {}) % {})",
+            BASE_SCORE, DECAY_RATE, SHUFFLE_MULT, SHUFFLE_MOD
+        );
+
         let (q, needs_cursor_bind) = match cursor {
             Some(_) => (
-                "SELECT uri, indexed_at FROM posts WHERE indexed_at < ?
-                ORDER BY ((score + 5) / (1.0 + ((strftime('%s', 'now') - indexed_at) / 3600.0) * 0.5) + ((strftime('%s', 'now') / 3600 + LENGTH(uri) * 7) % 10))
-                DESC LIMIT ?",
+                format!(
+                    "SELECT uri, indexed_at FROM posts WHERE indexed_at < ? ORDER BY ({}) DESC LIMIT ?",
+                    ranking_formula
+                ),
                 true
             ),
             None => (
-                "SELECT uri, indexed_at
-                FROM posts
-                ORDER BY ((score + 5) / (1.0 + ((strftime('%s', 'now') - indexed_at) / 3600.0) * 0.5) + ((strftime('%s', 'now') / 3600 + LENGTH(uri) * 7) % 10))
-                DESC LIMIT ?",
+                format!(
+                    "SELECT uri, indexed_at FROM posts ORDER BY ({}) DESC LIMIT ?",
+                    ranking_formula
+                ),
                 false
             ),
         };
 
-        let mut stmt = match self.conn.prepare(q) {
+        let mut stmt = match self.conn.prepare(&q) {
             Ok(s) => s,
             Err(_) => return (posts, None)
         };
@@ -155,7 +176,7 @@ impl Database {
             LIMIT ?
         ";
 
-        let mut stmt = match self.conn.prepare(q) {
+        let mut stmt = match self.conn.prepare(&q) {
             Ok(s) => s,
             Err(_) => return posts,
         };

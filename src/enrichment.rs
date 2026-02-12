@@ -23,7 +23,8 @@ impl EnrichThread {
         let url = format!("https://public.api.bsky.app/xrpc/app.bsky.feed.getPosts?uris={}",
             uris.join("&uris=")
         );
-
+        println!("[Enrichment] URL: {}", url);
+        
         let output = Command::new("curl")
             .arg("-s")
             .arg(url)
@@ -33,6 +34,7 @@ impl EnrichThread {
         let body = String::from_utf8(output.stdout).unwrap();
 
         let json: Value = serde_json::from_str(&body)?;
+        let mut found_uris: Vec<&str> = Vec::new();
 
         if let Some(posts) = json["posts"].as_array() {
             println!("[Enrichment] Got {} posts from API", posts.len());
@@ -46,9 +48,18 @@ impl EnrichThread {
                 let bookmarks = post["bookmarkCount"].as_i64().unwrap_or(0);
 
                 println!("[Enrichment] {} - L:{} R:{} Q:{}", uri, likes, reposts, quotes);
+                found_uris.push(uri);
 
                 self.db.update_engagement(uri, likes, reposts, quotes, replies, bookmarks);
             }
+
+            for uri in &uris {
+                if !found_uris.contains(&uri.as_str()) {
+                    println!("[Enrichment] Post not found, deleting: {}", uri);
+                    self.db.delete_post(uri);
+                }
+            }
+            
         } else {
             println!("[Enrichment] No posts in response. Body: {}", &body[..200.min(body.len())]);
         }
