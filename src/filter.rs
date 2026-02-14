@@ -2,22 +2,27 @@ use crate::models::{Feature, Frame, Operation, Post, TorontoPost, Embed, StrongR
 use crate::db::{Column, Database};
 use lru::LruCache;
 use std::num::NonZeroUsize;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const NSFW_LABELS: &[&str] = &["porn", "nudity", "sexual", "graphic-media", "nsfw"];
+const CAUGHT_UP_THRESHOLD_SECS: i64 = 3600; // 1 hour
 
 pub struct Filter {
     pub db: Database,
     toronto_uris: LruCache<String, ()>,
     lax_keywords: Vec<&'static str>,
-    strict_keywords: Vec<&'static str>
+    strict_keywords: Vec<&'static str>,
+    caught_up: Arc<AtomicBool>,
+    logged_caught_up: bool,
 }
 
 impl Filter {
-    pub fn new(db: Database) -> Self {
+    pub fn new(db: Database, caught_up: Arc<AtomicBool>) -> Self {
         Filter {
-            db, 
+            db,
             toronto_uris: LruCache::new(NonZeroUsize::new(100_000).unwrap()),
             lax_keywords: vec![
                 "toronto",
@@ -40,7 +45,9 @@ impl Filter {
                 "Roncesvalles",
                 "YYZ",
                 "metrolinx"
-            ]
+            ],
+            caught_up,
+            logged_caught_up: false,
         }
     }
 
@@ -112,17 +119,37 @@ impl Filter {
     }
 
     pub fn callback(&mut self, frame: &Frame, op: &Operation, post: &Post) {
+        if !self.logged_caught_up && !self.caught_up.load(Ordering::Relaxed) {
+            if let Ok(created) = chrono::DateTime::parse_from_rfc3339(&post.created_at) {
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs() as i64;
+                let post_ts = created.timestamp();
+                if (now - post_ts).abs() < CAUGHT_UP_THRESHOLD_SECS {
+                    println!("[Ingestion] Caught up to live firehose (post age {}s)", now - post_ts);
+                    self.caught_up.store(true, Ordering::Relaxed);
+                    self.logged_caught_up = true;
+                }
+            }
+        }
+
         if self.is_nsfw(post) || !self.is_6ix_post(post) {
             return;
         }
 
-        println!("---POST--- \n {}\n ------- \n", post.text);
+        println!("---POST [{}]--- \n {}\n ------- \n", post.created_at, post.text);
+
+        let created_at = chrono::DateTime::parse_from_rfc3339(&post.created_at)
+            .map(|dt| dt.timestamp())
+            .unwrap_or_else(|_| SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64);
 
         let toronto_post = TorontoPost {
             uri: format!("at://{}/{}", frame.repo, op.path),
             cid: self.bytes_to_hex(&op.cid.as_ref().unwrap()[1..]),
             did: frame.repo.clone(),
-            indexed_at: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64
+            indexed_at: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64,
+            created_at,
         };
 
         if let Err(e) = self.db.insert_post(&toronto_post) {

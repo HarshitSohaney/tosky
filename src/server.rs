@@ -2,6 +2,7 @@ use tiny_http::{Server, Response};
 use std::sync::Arc;
 use crate::db::Database;
 use std::thread;
+use urlencoding::decode;
 
 // Your ngrok hostname - update this each time you restart ngrok
 const HOSTNAME: &str = "unobscenely-keyed-tatiana.ngrok-free.dev";
@@ -71,13 +72,23 @@ pub fn start_server() {
                                 .unwrap_or(50)
                                 .min(100);
 
-                            // Parse cursor (optional)
-                            let cursor: Option<i64> = params.get("cursor")
-                                .and_then(|s| s.parse().ok());
+                            // Parse cursor (format: "timestamp:seed" or none)
+                            let (cursor, seed): (Option<i64>, u32) = match params.get("cursor") {
+                                Some(c) => {
+                                    let decoded = decode(c).unwrap_or(std::borrow::Cow::Borrowed(c));
+                                    println!("[Server] Raw cursor: {}, decoded: {}", c, decoded);
+                                    let parts: Vec<&str> = decoded.split(':').collect();
+                                    let ts = parts.get(0).and_then(|x| x.parse().ok());
+                                    let s = parts.get(1).and_then(|x| x.parse().ok()).unwrap_or_else(|| rand::random::<u32>());
+
+                                    (ts, s)
+                                },
+                                None => (None, rand::random::<u32>())
+                            };
 
                             println!("[Server] getFeedSkeleton request - limit:{} cursor:{:?}", limit, cursor);
 
-                            let (posts, next_cursor) = db.read_posts(limit, cursor);
+                            let (posts, next_cursor) = db.read_posts(limit, cursor, seed);
 
                             println!("[Server] Returning {} posts, next_cursor:{:?}", posts.len(), next_cursor);
                             for (i, uri) in posts.iter().enumerate() {
@@ -92,7 +103,11 @@ pub fn start_server() {
 
                             // Build response with optional cursor
                             let json = match next_cursor {
-                                Some(c) => format!(r#"{{"feed":[{}],"cursor":"{}"}}"#, feed.join(","), c),
+                                Some(c) => {
+                                    let cursor_str = format!("{}:{}", c, seed);
+                                    println!("[Server] Returning cursor: {}", cursor_str);
+                                    format!(r#"{{"feed":[{}],"cursor":"{}"}}"#, feed.join(","), cursor_str)
+                                },
                                 None => format!(r#"{{"feed":[{}]}}"#, feed.join(",")),
                             };
 

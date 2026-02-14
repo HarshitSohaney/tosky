@@ -102,14 +102,57 @@ curl -X POST "https://bsky.social/xrpc/com.atproto.repo.putRecord" \
     "record": {
       "$type": "app.bsky.feed.generator",
       "did": "did:web:unobscenely-keyed-tatiana.ngrok-free.dev",
-      "displayName": "Toronto Feed",
-      "description": "Posts about Toronto - keywords, hashtags, and links",
+      "displayName": "TOsky",
+      "description": "Ranked posts discussing all things Toronto",
       "createdAt": "2026-02-07T00:00:00Z"
     }
   }'
 ```
 
 Don't forget to also update `HOSTNAME` in `src/server.rs`!
+
+## Setting a feed avatar
+
+```bash
+# 1. Login
+TOKEN=$(curl -s -X POST "https://bsky.social/xrpc/com.atproto.server.createSession" \
+  -H "Content-Type: application/json" \
+  -d '{"identifier":"<YOUR_HANDLE>","password":"<YOUR_APP_PASSWORD>"}' | grep -o '"accessJwt":"[^"]*"' | cut -d'"' -f4)
+
+# 2. Upload the image (use image/jpeg for JPGs)
+BLOB=$(curl -s -X POST "https://bsky.social/xrpc/com.atproto.repo.uploadBlob" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: image/png" \
+  --data-binary @/path/to/your/image.png)
+
+echo "$BLOB"
+
+# 3. Update the feed record with the avatar
+# Copy ref.$link and size from the BLOB output into the avatar field below
+curl -X POST "https://bsky.social/xrpc/com.atproto.repo.putRecord" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "repo": "<YOUR_HANDLE>",
+    "collection": "app.bsky.feed.generator",
+    "rkey": "toronto",
+    "record": {
+      "$type": "app.bsky.feed.generator",
+      "did": "did:web:<YOUR_NGROK_HOSTNAME>",
+      "displayName": "TOsky",
+      "description": "Ranked posts discussing all things Toronto",
+      "avatar": {
+        "$type": "blob",
+        "ref": { "$link": "<LINK_FROM_BLOB_OUTPUT>" },
+        "mimeType": "image/png",
+        "size": <SIZE_FROM_BLOB_OUTPUT>
+      },
+      "createdAt": "2026-02-07T00:00:00Z"
+    }
+  }'
+```
+
+Image should be square, under 1MB, ideally 256x256 to 1000x1000 pixels.
 
 ## Deleting the feed
 

@@ -95,7 +95,8 @@ pub struct TorontoPost {
     pub uri: String,
     pub cid: String,
     pub did: String,
-    pub indexed_at: i64
+    pub indexed_at: i64,
+    pub created_at: i64,
 }
 
 #[derive(Debug, Deserialize)]

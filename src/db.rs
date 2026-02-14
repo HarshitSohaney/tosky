@@ -4,8 +4,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 // Ranking parameters
 const BASE_SCORE: f64 = 5.0;      // Minimum score for new posts with no engagement
-const DECAY_RATE: f64 = 0.7;      // How fast posts lose relevance (higher = faster decay)
-const SHUFFLE_MOD: i32 = 10;      // Range of hourly shuffle (0 to N-1)
+const DECAY_RATE: f64 = 0.01;     // Quadratic decay factor (age^2 * this)
+const SHUFFLE_MOD: i32 = 5;      // Range of hourly shuffle (0 to N-1)
 const SHUFFLE_MULT: i32 = 7;      // Multiplier for URI-based variance
 
 pub struct Database {
@@ -19,14 +19,16 @@ pub enum Column {
 }
 
 pub struct Metadata {
-    pub seq: i64
+    pub seq: i64,
+    pub last_updated: i64,
 }
 
 impl Database {
     pub fn new(path: &str) -> Self {
         let conn = sqlite::open(path).unwrap();
         conn.execute("PRAGMA journal_mode=WAL;").ok();
-        
+        conn.execute("PRAGMA busy_timeout=5000;").ok();
+
         let q = "
             CREATE TABLE IF NOT EXISTS posts (
                 uri TEXT PRIMARY KEY,
@@ -52,6 +54,9 @@ impl Database {
             eprintln!("There was an creating the table {}", e);
         }
 
+        // Migration: add created_at column if it doesn't exist
+        conn.execute("ALTER TABLE posts ADD COLUMN created_at INTEGER DEFAULT 0").ok();
+
         Database { conn, counter: 0 }
     }
 
@@ -60,11 +65,12 @@ impl Database {
             self.pop_posts();
         }
 
-        let mut stmt = self.conn.prepare("INSERT INTO posts (uri, cid, did, indexed_at) VALUES (?, ?, ?, ?)")?;
+        let mut stmt = self.conn.prepare("INSERT INTO posts (uri, cid, did, indexed_at, created_at) VALUES (?, ?, ?, ?, ?)")?;
         stmt.bind((1, post.uri.as_str()))?;
         stmt.bind((2, post.cid.as_str()))?;
         stmt.bind((3, post.did.as_str()))?;
         stmt.bind((4, post.indexed_at))?;
+        stmt.bind((5, post.created_at))?;
         stmt.next()?;
 
         self.counter += 1;
@@ -95,13 +101,14 @@ impl Database {
     }
 
     /// cursor is the indexed_at timestamp to paginate from
-    pub fn read_posts(&self, limit: i64, cursor: Option<i64>) -> (Vec<String>, Option<String>) {
+    pub fn read_posts(&self, limit: i64, cursor: Option<i64>, seed: u32) -> (Vec<String>, Option<String>) {
         let mut posts: Vec<String> = Vec::new();
         let mut last_indexed_at: Option<i64> = None;
 
+        let age_hours = "(strftime('%s', 'now') - CASE WHEN created_at > 0 THEN created_at ELSE indexed_at END) / 3600.0";
         let ranking_formula = format!(
-            "(score + {}) / (1.0 + ((strftime('%s', 'now') - indexed_at) / 3600.0) * {}) + ((strftime('%s', 'now') / 3600 + LENGTH(uri) * {}) % {})",
-            BASE_SCORE, DECAY_RATE, SHUFFLE_MULT, SHUFFLE_MOD
+            "(score + {}) / (1.0 + ({} * {} * {})) + (({} + LENGTH(uri) * {}) % {})",
+            BASE_SCORE, age_hours, age_hours, DECAY_RATE, seed, SHUFFLE_MULT, SHUFFLE_MOD
         );
 
         let (q, needs_cursor_bind) = match cursor {
@@ -165,14 +172,23 @@ impl Database {
         Ok(())
     }
 
+    pub fn has_unenriched_posts(&self) -> bool {
+        let q = "SELECT 1 FROM posts WHERE last_enriched = 0 LIMIT 1";
+        if let Ok(mut stmt) = self.conn.prepare(q) {
+            if let Ok(State::Row) = stmt.next() {
+                return true;
+            }
+        }
+        false
+    }
+
     pub fn get_posts_to_enrich(&self, limit: i64) -> Vec<String> {
         let mut posts: Vec<String> = Vec::new();
 
         let q = "
             SELECT uri
             FROM posts
-            ORDER BY last_enriched
-            ASC 
+            ORDER BY (created_at = 0) DESC, last_enriched ASC
             LIMIT ?
         ";
 
@@ -192,7 +208,16 @@ impl Database {
         posts
     }
 
-    pub fn update_engagement(&self, 
+    pub fn backfill_created_at(&self, uri: &str, created_at: i64) {
+        let q = "UPDATE posts SET created_at = ? WHERE uri = ? AND created_at = 0";
+        if let Ok(mut stmt) = self.conn.prepare(q) {
+            stmt.bind((1, created_at)).ok();
+            stmt.bind((2, uri)).ok();
+            stmt.next().ok();
+        }
+    }
+
+    pub fn update_engagement(&self,
         uri: &str,
         likes: i64,
         reposts: i64,
@@ -229,19 +254,40 @@ impl Database {
             stmt.bind((1, metadata.seq.to_string().as_str())).ok();
             stmt.next().ok();
         }
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let q2 = "INSERT OR REPLACE INTO metadata (key, value) VALUES ('cursor_updated', ?)";
+        if let Ok(mut stmt) = self.conn.prepare(q2) {
+            stmt.bind((1, now.to_string().as_str())).ok();
+            stmt.next().ok();
+        }
     }
 
     pub fn get_metadata(&self) -> Option<Metadata> {
+        let mut seq: Option<i64> = None;
+        let mut last_updated: i64 = 0;
+
         let q = "SELECT value FROM metadata WHERE key = 'cursor'";
         if let Ok(mut stmt) = self.conn.prepare(q) {
             if let Ok(State::Row) = stmt.next() {
                 if let Ok(seq_str) = stmt.read::<String, _>(0) {
-                    if let Ok(seq) = seq_str.parse::<i64>() {
-                        return Some(Metadata { seq });
-                    }
+                    seq = seq_str.parse::<i64>().ok();
                 }
             }
         }
-        None
+
+        let q2 = "SELECT value FROM metadata WHERE key = 'cursor_updated'";
+        if let Ok(mut stmt) = self.conn.prepare(q2) {
+            if let Ok(State::Row) = stmt.next() {
+                if let Ok(ts_str) = stmt.read::<String, _>(0) {
+                    last_updated = ts_str.parse::<i64>().unwrap_or(0);
+                }
+            }
+        }
+
+        seq.map(|s| Metadata { seq: s, last_updated })
     }
 }

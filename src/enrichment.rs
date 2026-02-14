@@ -5,11 +5,29 @@ use crate::filter::NSFW_LABELS;
 
 pub struct EnrichThread {
     db: Database,
+    logged_normal_mode: bool,
 }
 
 impl EnrichThread {
     pub fn new(path: &str) -> Self {
-        EnrichThread { db: Database::new(path) }
+        EnrichThread {
+            db: Database::new(path),
+            logged_normal_mode: false,
+        }
+    }
+
+    pub fn sleep_duration_secs(&mut self) -> u64 {
+        if self.db.has_unenriched_posts() {
+            println!("[Enrichment] Unenriched posts remain — aggressive mode (5s)");
+            self.logged_normal_mode = false;
+            5
+        } else {
+            if !self.logged_normal_mode {
+                println!("[Enrichment] All posts enriched — normal schedule (60s)");
+                self.logged_normal_mode = true;
+            }
+            60
+        }
     }
 
     pub fn enrich_what_we_missed(&self) -> Result<(), Box<dyn std::error::Error>> {
@@ -66,6 +84,12 @@ impl EnrichThread {
                 found_uris.push(uri);
 
                 self.db.update_engagement(uri, likes, reposts, quotes, replies, bookmarks);
+
+                if let Some(created_str) = post["record"]["createdAt"].as_str() {
+                    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(created_str) {
+                        self.db.backfill_created_at(uri, dt.timestamp());
+                    }
+                }
             }
 
             for uri in &uris {
