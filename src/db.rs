@@ -4,7 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 // Ranking parameters
 const BASE_SCORE: f64 = 5.0;      // Minimum score for new posts with no engagement
-const DECAY_RATE: f64 = 0.01;     // Quadratic decay factor (age^2 * this)
+const DECAY_RATE: f64 = 0.3;     // Quadratic decay factor (age^2 * this)
 const SHUFFLE_MOD: i32 = 5;      // Range of hourly shuffle (0 to N-1)
 const SHUFFLE_MULT: i32 = 7;      // Multiplier for URI-based variance
 
