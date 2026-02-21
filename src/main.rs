@@ -5,9 +5,8 @@ mod parser;
 mod filter;
 mod server;
 mod enrichment;
+mod backfill;
 use std::thread;
-use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
 
 use crate::db::Database;
 use crate::enrichment::EnrichThread;
@@ -17,8 +16,6 @@ fn main() {
     {
         let _ = Database::new("../db/posts.db");
     }
-
-    let caught_up = Arc::new(AtomicBool::new(false));
 
     let enrichment_handle = thread::spawn(move || {
         let mut enrich = EnrichThread::new("../db/posts.db");
@@ -34,16 +31,21 @@ fn main() {
 
     });
 
-    let caught_up_ingest = caught_up.clone();
-    let ingestion_handle = thread::spawn(move || {
-        let db = Database::new("../db/posts.db");
-        let mut filter: Filter = Filter::new(db, caught_up_ingest);
-
-        ingestion::start_ingestion(&mut filter);
-    });
-
     let server_handle = thread::spawn(|| {
         server::start_server();
+    });
+
+    // Run backfill synchronously on main thread before starting ingestion
+    {
+        let mut db = Database::new("../db/posts.db");
+        backfill::run_backfill(&mut db);
+    }
+
+    let ingestion_handle = thread::spawn(move || {
+        let db = Database::new("../db/posts.db");
+        let mut filter: Filter = Filter::new(db);
+
+        ingestion::start_ingestion(&mut filter);
     });
 
     enrichment_handle.join().unwrap();

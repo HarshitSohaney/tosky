@@ -4,7 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 // Ranking parameters
 const BASE_SCORE: f64 = 5.0;      // Minimum score for new posts with no engagement
-const DECAY_RATE: f64 = 0.3;     // Quadratic decay factor (age^2 * this)
+const DECAY_RATE: f64 = 0.05;     // Quadratic decay factor (age^2 * this)
 const SHUFFLE_MOD: i32 = 5;      // Range of hourly shuffle (0 to N-1)
 const SHUFFLE_MULT: i32 = 7;      // Multiplier for URI-based variance
 
@@ -246,6 +246,49 @@ impl Database {
             stmt.bind((8, uri)).ok();
             stmt.next().ok();
         }
+    }
+
+    pub fn insert_post_if_not_exists(
+        &mut self,
+        uri: &str,
+        cid: &str,
+        did: &str,
+        created_at: i64,
+        likes: i64,
+        reposts: i64,
+        quotes: i64,
+        replies: i64,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if self.counter >= 1000 {
+            self.pop_posts();
+        }
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        let score = likes + reposts * 2 + quotes * 3 + replies;
+
+        let mut stmt = self.conn.prepare(
+            "INSERT OR IGNORE INTO posts (uri, cid, did, indexed_at, created_at, likes, reposts, quotes, replies, score, last_enriched)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        )?;
+        stmt.bind((1, uri))?;
+        stmt.bind((2, cid))?;
+        stmt.bind((3, did))?;
+        stmt.bind((4, now))?;
+        stmt.bind((5, created_at))?;
+        stmt.bind((6, likes))?;
+        stmt.bind((7, reposts))?;
+        stmt.bind((8, quotes))?;
+        stmt.bind((9, replies))?;
+        stmt.bind((10, score))?;
+        stmt.bind((11, now))?;
+        stmt.next()?;
+
+        self.counter += 1;
+        Ok(())
     }
 
     pub fn set_metadata(&self, metadata: &Metadata) {

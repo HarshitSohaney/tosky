@@ -2,52 +2,47 @@ use crate::models::{Feature, Frame, Operation, Post, TorontoPost, Embed, StrongR
 use crate::db::{Column, Database};
 use lru::LruCache;
 use std::num::NonZeroUsize;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const NSFW_LABELS: &[&str] = &["porn", "nudity", "sexual", "graphic-media", "nsfw"];
 const CAUGHT_UP_THRESHOLD_SECS: i64 = 3600; // 1 hour
 
+pub const LAX_KEYWORDS: &[&str] = &[
+    "toronto",
+    "torono",
+];
+
+pub const STRICT_KEYWORDS: &[&str] = &[
+    "ttc",
+    "cn tower",
+    "6ix",
+    "Danforth Music Hall",
+    "bluejays",
+    "Scotiabank arena",
+    "air canada centre",
+    "Rogers centre",
+    "Rogers Stadium",
+    "Trillium Park",
+    "Olivia Chow",
+    "Kensington Market",
+    "Yonge",
+    "Roncesvalles",
+    "YYZ",
+    "metrolinx",
+];
+
 pub struct Filter {
     pub db: Database,
     toronto_uris: LruCache<String, ()>,
-    lax_keywords: Vec<&'static str>,
-    strict_keywords: Vec<&'static str>,
-    caught_up: Arc<AtomicBool>,
-    logged_caught_up: bool,
+    caught_up: bool,
 }
 
 impl Filter {
-    pub fn new(db: Database, caught_up: Arc<AtomicBool>) -> Self {
+    pub fn new(db: Database) -> Self {
         Filter {
             db,
             toronto_uris: LruCache::new(NonZeroUsize::new(100_000).unwrap()),
-            lax_keywords: vec![
-                "toronto",
-                "torono",
-            ],
-            strict_keywords: vec![
-                "ttc",
-                "cn tower",
-                "6ix",
-                "Danforth Music Hall",
-                "bluejays",
-                "Scotiabank arena",
-                "air canada centre",
-                "Rogers centre",
-                "Rogers Stadium",
-                "Trillium Park",
-                "Olivia Chow",
-                "Kensington Market",
-                "Yonge",
-                "Roncesvalles",
-                "YYZ",
-                "metrolinx"
-            ],
-            caught_up,
-            logged_caught_up: false,
+            caught_up: false,
         }
     }
 
@@ -81,8 +76,8 @@ impl Filter {
             text = text + " ALT: " + &alt_text.to_lowercase()
         }
 
-        if self.lax_keywords.iter().any(|k| text.contains(k)) 
-            || self.strict_keywords.iter().any(|k| self.contains_word_strict(&text, k)) {
+        if LAX_KEYWORDS.iter().any(|k| text.contains(k))
+            || STRICT_KEYWORDS.iter().any(|k| self.contains_word_strict(&text, k)) {
             return true;
         }
 
@@ -119,7 +114,7 @@ impl Filter {
     }
 
     pub fn callback(&mut self, frame: &Frame, op: &Operation, post: &Post) {
-        if !self.logged_caught_up && !self.caught_up.load(Ordering::Relaxed) {
+        if !self.caught_up {
             if let Ok(created) = chrono::DateTime::parse_from_rfc3339(&post.created_at) {
                 let now = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
@@ -128,8 +123,7 @@ impl Filter {
                 let post_ts = created.timestamp();
                 if (now - post_ts).abs() < CAUGHT_UP_THRESHOLD_SECS {
                     println!("[Ingestion] Caught up to live firehose (post age {}s)", now - post_ts);
-                    self.caught_up.store(true, Ordering::Relaxed);
-                    self.logged_caught_up = true;
+                    self.caught_up = true;
                 }
             }
         }

@@ -3,35 +3,28 @@ use tungstenite::{connect, Message};
 use crate::models::{Post, Action, Like, Repost, InteractionType};
 use crate::db::Metadata;
 use crate::filter::Filter;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 use std::thread;
 
-const MAX_CURSOR_AGE_SECS: i64 = 259200; // 3 days
-
 pub fn start_ingestion(filter: &mut Filter) {
-    loop {
-         // Let's see if we have a cursor we need to use!
-        let uri = match filter.db.get_metadata() {
-            Some(meta) => {
-                let now = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs() as i64;
-                let age = now - meta.last_updated;
+    let mut first_connect = true;
 
-                if meta.last_updated > 0 && age > MAX_CURSOR_AGE_SECS {
-                    println!("[Ingestion] Cursor is {}s old (>{} max), discarding stale cursor and starting fresh",
-                        age, MAX_CURSOR_AGE_SECS);
-                    String::from("wss://bsky.network/xrpc/com.atproto.sync.subscribeRepos")
-                } else {
+    loop {
+        let uri = if first_connect {
+            first_connect = false;
+            println!("[Ingestion] Starting fresh (post-backfill)");
+            String::from("wss://bsky.network/xrpc/com.atproto.sync.subscribeRepos")
+        } else {
+            match filter.db.get_metadata() {
+                Some(meta) => {
                     println!("[Ingestion] Resuming from cursor: {}", meta.seq);
                     format!("wss://bsky.network/xrpc/com.atproto.sync.subscribeRepos?cursor={}", meta.seq)
-                }
-            },
-            None => {
-                println!("[Ingestion] No cursor found, starting fresh");
-                String::from("wss://bsky.network/xrpc/com.atproto.sync.subscribeRepos")
-            },
+                },
+                None => {
+                    println!("[Ingestion] No cursor found, starting fresh");
+                    String::from("wss://bsky.network/xrpc/com.atproto.sync.subscribeRepos")
+                },
+            }
         };
 
         match connect(&uri) {
