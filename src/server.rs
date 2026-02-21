@@ -4,8 +4,10 @@ use crate::db::Database;
 use std::thread;
 use urlencoding::decode;
 
-// Your ngrok hostname - update this each time you restart ngrok
-const HOSTNAME: &str = "unobscenely-keyed-tatiana.ngrok-free.dev";
+fn hostname() -> String {
+    std::env::var("TOSKY_HOSTNAME")
+        .unwrap_or_else(|_| "unobscenely-keyed-tatiana.ngrok-free.dev".to_string())
+}
 
 /// Parse query string into key-value pairs
 fn parse_query_params(url: &str) -> std::collections::HashMap<String, String> {
@@ -28,27 +30,31 @@ fn parse_query_params(url: &str) -> std::collections::HashMap<String, String> {
 /// DID document for did:web resolution
 fn did_json() -> String {
     let json = r##"{"@context":["https://www.w3.org/ns/did/v1"],"id":"did:web:HOSTNAME","service":[{"id":"#bsky_fg","type":"BskyFeedGenerator","serviceEndpoint":"https://HOSTNAME"}]}"##;
-    json.replace("HOSTNAME", HOSTNAME)
+    json.replace("HOSTNAME", &hostname())
 }
 
 /// Describe feed generator endpoint
 fn describe_feed_generator() -> String {
     let json = r#"{"did":"did:web:HOSTNAME","feeds":[{"uri":"at://did:web:HOSTNAME/app.bsky.feed.generator/toronto"}]}"#;
-    json.replace("HOSTNAME", HOSTNAME)
+    json.replace("HOSTNAME", &hostname())
 }
 
-pub fn start_server() {
-    let server = Arc::new(Server::http("0.0.0.0:3000").unwrap());
-    println!("Server running on http://localhost:3000");
+pub fn start_server(db_path: &str) {
+    let port = std::env::var("TOSKY_PORT").unwrap_or_else(|_| "3000".to_string());
+    let addr = format!("0.0.0.0:{}", port);
+    let server = Arc::new(Server::http(&addr).unwrap());
+    println!("Server running on http://localhost:{}", port);
 
     let num_guards = 4;
     let mut guards = Vec::with_capacity(num_guards);
 
+    let db_path = db_path.to_string();
     for _ in 0..num_guards {
         let server = server.clone();
+        let db_path = db_path.clone();
 
         let guard = thread::spawn(move || {
-            let db = Database::new("../db/posts.db");
+            let db = Database::new(&db_path);
 
             loop {
                 match server.recv() {

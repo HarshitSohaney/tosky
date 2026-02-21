@@ -12,13 +12,20 @@ use crate::db::Database;
 use crate::enrichment::EnrichThread;
 use crate::filter::Filter;
 
+fn db_path() -> String {
+    std::env::var("TOSKY_DB_PATH").unwrap_or_else(|_| "../db/posts.db".to_string())
+}
+
 fn main() {
+    let db_path = db_path();
+
     {
-        let _ = Database::new("../db/posts.db");
+        let _ = Database::new(&db_path);
     }
 
+    let enrichment_db_path = db_path.clone();
     let enrichment_handle = thread::spawn(move || {
-        let mut enrich = EnrichThread::new("../db/posts.db");
+        let mut enrich = EnrichThread::new(&enrichment_db_path);
 
         loop {
             if let Err(e) = enrich.enrich_what_we_missed() {
@@ -31,18 +38,20 @@ fn main() {
 
     });
 
-    let server_handle = thread::spawn(|| {
-        server::start_server();
+    let server_db_path = db_path.clone();
+    let server_handle = thread::spawn(move || {
+        server::start_server(&server_db_path);
     });
 
     // Run backfill synchronously on main thread before starting ingestion
     {
-        let mut db = Database::new("../db/posts.db");
+        let mut db = Database::new(&db_path);
         backfill::run_backfill(&mut db);
     }
 
+    let ingestion_db_path = db_path.clone();
     let ingestion_handle = thread::spawn(move || {
-        let db = Database::new("../db/posts.db");
+        let db = Database::new(&ingestion_db_path);
         let mut filter: Filter = Filter::new(db);
 
         ingestion::start_ingestion(&mut filter);
