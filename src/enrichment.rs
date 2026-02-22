@@ -18,15 +18,15 @@ impl EnrichThread {
 
     pub fn sleep_duration_secs(&mut self) -> u64 {
         if self.db.has_unenriched_posts() {
-            println!("[Enrichment] Unenriched posts remain — aggressive mode (5s)");
+            println!("[Enrichment] Unenriched posts remain — aggressive mode (2s)");
             self.logged_normal_mode = false;
-            5
+            2
         } else {
             if !self.logged_normal_mode {
-                println!("[Enrichment] All posts enriched — normal schedule (60s)");
+                println!("[Enrichment] All posts enriched — normal schedule (30s)");
                 self.logged_normal_mode = true;
             }
-            60
+            30
         }
     }
 
@@ -94,8 +94,7 @@ impl EnrichThread {
 
             for uri in &uris {
                 if !found_uris.contains(&uri.as_str()) {
-                    println!("[Enrichment] Post not found, deleting: {}", uri);
-                    self.db.delete_post(uri);
+                    println!("[Enrichment] Post not found in API response, skipping: {}", uri);
                 }
             }
 

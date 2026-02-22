@@ -182,26 +182,32 @@ impl Database {
         false
     }
 
-    pub fn get_posts_to_enrich(&self, limit: i64) -> Vec<String> {
+    pub fn get_posts_to_enrich(&self, _limit: i64) -> Vec<String> {
         let mut posts: Vec<String> = Vec::new();
 
-        let q = "
-            SELECT uri
-            FROM posts
-            ORDER BY (created_at = 0) DESC, last_enriched ASC
-            LIMIT ?
-        ";
+        let age = "strftime('%s', 'now') - CASE WHEN created_at > 0 THEN created_at ELSE indexed_at END";
 
-        let mut stmt = match self.conn.prepare(&q) {
-            Ok(s) => s,
-            Err(_) => return posts,
-        };
+        // Tiered enrichment: recent posts change fast, older posts are most stale.
+        // Split 25-post budget across age tiers, stalest-enriched first within each.
+        let tiers: &[(i64, String)] = &[
+            (10, format!("({}) < 3600", age)),          // <1h old: 10 slots
+            (8,  format!("({0}) >= 3600 AND ({0}) < 14400", age)), // 1-4h old: 8 slots
+            (7,  format!("({}) >= 14400", age)),         // >4h old: 7 slots
+        ];
 
-        stmt.bind((1, limit));
+        for (tier_limit, age_filter) in tiers {
+            let q = format!(
+                "SELECT uri FROM posts WHERE {} ORDER BY last_enriched ASC LIMIT ?",
+                age_filter
+            );
 
-        while let Ok(sqlite::State::Row) = stmt.next() {
-            if let Ok(uri) = stmt.read::<String, _>(0) {
-                posts.push(uri);
+            if let Ok(mut stmt) = self.conn.prepare(&q) {
+                stmt.bind((1, *tier_limit)).ok();
+                while let Ok(sqlite::State::Row) = stmt.next() {
+                    if let Ok(uri) = stmt.read::<String, _>(0) {
+                        posts.push(uri);
+                    }
+                }
             }
         }
 

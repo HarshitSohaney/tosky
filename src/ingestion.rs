@@ -1,10 +1,14 @@
 use crate::parser::{parse_car_blocks, parse_message};
 use tungstenite::{connect, Message};
+use tungstenite::stream::MaybeTlsStream;
 use crate::models::{Post, Action, Like, Repost, InteractionType};
 use crate::db::Metadata;
 use crate::filter::Filter;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::thread;
+
+const READ_TIMEOUT_SECS: u64 = 90;
+const MAX_CURSOR_AGE_SECS: i64 = 259200; // 3 days
 
 pub fn start_ingestion(filter: &mut Filter) {
     let mut first_connect = true;
@@ -17,8 +21,20 @@ pub fn start_ingestion(filter: &mut Filter) {
         } else {
             match filter.db.get_metadata() {
                 Some(meta) => {
-                    println!("[Ingestion] Resuming from cursor: {}", meta.seq);
-                    format!("wss://bsky.network/xrpc/com.atproto.sync.subscribeRepos?cursor={}", meta.seq)
+                    let now = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs() as i64;
+                    let age = now - meta.last_updated;
+
+                    if meta.last_updated > 0 && age > MAX_CURSOR_AGE_SECS {
+                        println!("[Ingestion] Cursor is {}s old (>{} max), discarding stale cursor",
+                            age, MAX_CURSOR_AGE_SECS);
+                        String::from("wss://bsky.network/xrpc/com.atproto.sync.subscribeRepos")
+                    } else {
+                        println!("[Ingestion] Resuming from cursor: {} (age: {}s)", meta.seq, age);
+                        format!("wss://bsky.network/xrpc/com.atproto.sync.subscribeRepos?cursor={}", meta.seq)
+                    }
                 },
                 None => {
                     println!("[Ingestion] No cursor found, starting fresh");
@@ -31,12 +47,33 @@ pub fn start_ingestion(filter: &mut Filter) {
             Ok((mut socket, _)) => {
                 println!("[Ingestion] Connected to the firehose");
 
+                // Set read timeout so we detect dead connections instead of
+                // hanging forever on socket.read()
+                let timeout = Some(Duration::from_secs(READ_TIMEOUT_SECS));
+                match socket.get_ref() {
+                    MaybeTlsStream::NativeTls(tls) => {
+                        tls.get_ref().set_read_timeout(timeout).ok();
+                    },
+                    MaybeTlsStream::Plain(tcp) => {
+                        tcp.set_read_timeout(timeout).ok();
+                    },
+                    _ => {
+                        eprintln!("[Ingestion] Warning: could not set read timeout on stream");
+                    }
+                }
+
                 let mut count = 0;
 
                 // when we receive a message from the url, call a provided callback
                 // that passes the posts to our filter
                 loop {
-                    let msg = socket.read().unwrap();
+                    let msg = match socket.read() {
+                        Ok(msg) => msg,
+                        Err(e) => {
+                            eprintln!("[Ingestion] WebSocket read error: {}", e);
+                            break;
+                        }
+                    };
 
                     match msg {
                         Message::Binary(data) => {
