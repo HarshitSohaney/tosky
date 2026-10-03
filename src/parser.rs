@@ -24,33 +24,38 @@ pub fn parse_message(data: &[u8]) -> Result<Option<Frame>, Box<dyn std::error::E
     Ok(Some(frame))
 }
 
-fn split_cid_and_data(block: &[u8]) -> (Vec<u8>, Vec<u8>) {
+fn split_cid_and_data(block: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
     // CID structure:
     // [version varint][codec varint][hash_type varint][hash_len varint][hash_bytes]
     let mut pos = 0;
 
     let (_, size) = read_varint(&block[pos..]);
     pos += size;
+    if pos > block.len() { return None; }
 
     let (_, size) = read_varint(&block[pos..]);
     pos += size;
+    if pos > block.len() { return None; }
 
     // 3. Read hash type (varint, 0x12 for sha256)
     let (_, size) = read_varint(&block[pos..]);
     pos += size;
+    if pos > block.len() { return None; }
 
     // 4. Read hash length (varint, 0x20 = 32)
     let (hash_len, size) = read_varint(&block[pos..]);
     pos += size;
+    if pos > block.len() { return None; }
 
     // 5. Skip hash bytes
     pos += hash_len as usize;
+    if pos > block.len() { return None; }
 
     // Now pos points to where DATA begins
     let cid = block[..pos].to_vec();
     let data = block[pos..].to_vec();
 
-    (cid, data)
+    Some((cid, data))
 }
 
 pub fn parse_car_blocks(car_data: &[u8]) -> Vec<(Vec<u8>, Vec<u8>)> {  // Vec<(CID, Data)>
@@ -67,15 +72,24 @@ pub fn parse_car_blocks(car_data: &[u8]) -> Vec<(Vec<u8>, Vec<u8>)> {  // Vec<(C
         let (block_len, varint_size) = read_varint(&car_data[pos..]);
         pos += varint_size;
 
+        let block_end = pos + block_len as usize;
+        if block_end > car_data.len() {
+            eprintln!("CAR block overflows data: pos={}, block_len={}, data_len={}", pos, block_len, car_data.len());
+            break;
+        }
+
         // Block contains: [CID][DATA]
         // We need to parse CID to know where DATA starts
-        let block_bytes = &car_data[pos..pos + block_len as usize];
+        let block_bytes = &car_data[pos..block_end];
 
         // Parse CID, get remaining as data
-        let (cid, data) = split_cid_and_data(block_bytes);
-        blocks.push((cid, data));
+        if let Some((cid, data)) = split_cid_and_data(block_bytes) {
+            blocks.push((cid, data));
+        } else {
+            eprintln!("Malformed CID in CAR block at pos={}, skipping", pos);
+        }
 
-        pos += block_len as usize;
+        pos = block_end;
     }
 
     blocks

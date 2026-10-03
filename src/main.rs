@@ -24,7 +24,7 @@ fn main() {
     }
 
     let enrichment_db_path = db_path.clone();
-    let enrichment_handle = thread::spawn(move || {
+    let _enrichment_handle = thread::spawn(move || {
         let mut enrich = EnrichThread::new(&enrichment_db_path);
 
         loop {
@@ -39,7 +39,7 @@ fn main() {
     });
 
     let server_db_path = db_path.clone();
-    let server_handle = thread::spawn(move || {
+    let _server_handle = thread::spawn(move || {
         server::start_server(&server_db_path);
     });
 
@@ -49,15 +49,24 @@ fn main() {
         backfill::run_backfill(&mut db);
     }
 
-    let ingestion_db_path = db_path.clone();
-    let ingestion_handle = thread::spawn(move || {
-        let db = Database::new(&ingestion_db_path);
-        let mut filter: Filter = Filter::new(db);
+    // Monitor ingestion thread and respawn if it panics
+    loop {
+        let ingestion_db_path = db_path.clone();
+        let ingestion_handle = thread::spawn(move || {
+            let db = Database::new(&ingestion_db_path);
+            let mut filter: Filter = Filter::new(db);
 
-        ingestion::start_ingestion(&mut filter);
-    });
+            ingestion::start_ingestion(&mut filter);
+        });
 
-    enrichment_handle.join().unwrap();
-    ingestion_handle.join().unwrap();
-    server_handle.join().unwrap();
+        match ingestion_handle.join() {
+            Ok(_) => {
+                eprintln!("Ingestion thread exited cleanly, restarting...");
+            }
+            Err(e) => {
+                eprintln!("Ingestion thread panicked: {:?}, restarting in 5s...", e);
+                thread::sleep(std::time::Duration::from_secs(5));
+            }
+        }
+    }
 }
