@@ -5,8 +5,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 // Ranking parameters
 const BASE_SCORE: f64 = 5.0;      // Minimum score for new posts with no engagement
 const DECAY_RATE: f64 = 0.05;     // Quadratic decay factor (age^2 * this)
-const SHUFFLE_MOD: i32 = 5;      // Range of hourly shuffle (0 to N-1)
-const SHUFFLE_MULT: i32 = 7;      // Multiplier for URI-based variance
+const FEED_WINDOW_SECS: i64 = 7 * 86400;   // Only posts newer than this are served
+const RETENTION_SECS: i64 = 14 * 86400;    // Posts older than this are pruned
 
 pub struct Database {
     conn: Connection,
@@ -79,14 +79,18 @@ impl Database {
 
     pub fn pop_posts(&mut self) {
         let q = "
-            DELETE FROM posts WHERE indexed_at < (
-            SELECT indexed_at FROM posts
-            ORDER BY indexed_at DESC
-            LIMIT 1 OFFSET 99999
-        )";
+            DELETE FROM posts
+            WHERE (CASE WHEN created_at > 0 THEN created_at ELSE indexed_at END) < strftime('%s', 'now') - ?
+        ";
 
-        if let Err(e) = self.conn.execute(q) {
-            eprintln!("There was an deleting the table {}", e);
+        match self.conn.prepare(q) {
+            Ok(mut stmt) => {
+                stmt.bind((1, RETENTION_SECS)).ok();
+                if let Err(e) = stmt.next() {
+                    eprintln!("There was an error pruning posts {}", e);
+                }
+            }
+            Err(e) => eprintln!("There was an error pruning posts {}", e),
         }
 
         self.counter = 0;
@@ -100,58 +104,41 @@ impl Database {
         }
     }
 
-    /// cursor is the indexed_at timestamp to paginate from
-    pub fn read_posts(&self, limit: i64, cursor: Option<i64>, seed: u32) -> (Vec<String>, Option<String>) {
+    /// cursor is the offset into the ranked list
+    pub fn read_posts(&self, limit: i64, offset: i64) -> (Vec<String>, Option<String>) {
         let mut posts: Vec<String> = Vec::new();
-        let mut last_indexed_at: Option<i64> = None;
 
-        let age_hours = "(strftime('%s', 'now') - CASE WHEN created_at > 0 THEN created_at ELSE indexed_at END) / 3600.0";
+        let post_time = "(CASE WHEN created_at > 0 THEN created_at ELSE indexed_at END)";
+        let age_hours = format!("(strftime('%s', 'now') - {}) / 3600.0", post_time);
         let ranking_formula = format!(
-            "(score + {}) / (1.0 + ({} * {} * {})) + (({} + LENGTH(uri) * {}) % {})",
-            BASE_SCORE, age_hours, age_hours, DECAY_RATE, seed, SHUFFLE_MULT, SHUFFLE_MOD
+            "(score + {}) / (1.0 + ({} * {} * {}))",
+            BASE_SCORE, age_hours, age_hours, DECAY_RATE
         );
 
-        let (q, needs_cursor_bind) = match cursor {
-            Some(_) => (
-                format!(
-                    "SELECT uri, indexed_at FROM posts WHERE indexed_at < ? ORDER BY ({}) DESC LIMIT ?",
-                    ranking_formula
-                ),
-                true
-            ),
-            None => (
-                format!(
-                    "SELECT uri, indexed_at FROM posts ORDER BY ({}) DESC LIMIT ?",
-                    ranking_formula
-                ),
-                false
-            ),
-        };
+        // uri breaks ties so the order is stable across pages
+        let q = format!(
+            "SELECT uri FROM posts WHERE {} > strftime('%s', 'now') - ? ORDER BY ({}) DESC, uri LIMIT ? OFFSET ?",
+            post_time, ranking_formula
+        );
 
         let mut stmt = match self.conn.prepare(&q) {
             Ok(s) => s,
             Err(_) => return (posts, None)
         };
 
-        if needs_cursor_bind {
-            stmt.bind((1, cursor.unwrap())).ok();
-            stmt.bind((2, limit)).ok();
-        } else {
-            stmt.bind((1, limit)).ok();
-        }
+        stmt.bind((1, FEED_WINDOW_SECS)).ok();
+        stmt.bind((2, limit)).ok();
+        stmt.bind((3, offset)).ok();
 
         while let Ok(sqlite::State::Row) = stmt.next() {
             if let Ok(uri) = stmt.read::<String, _>(0) {
                 posts.push(uri);
             }
-            if let Ok(indexed_at) = stmt.read::<i64, _>(1) {
-                last_indexed_at = Some(indexed_at);
-            }
         }
 
         // Only return cursor if we got a full page (more results likely)
         let next_cursor = if posts.len() == limit as usize {
-            last_indexed_at.map(|ts| ts.to_string())
+            Some((offset + limit).to_string())
         } else {
             None
         };
